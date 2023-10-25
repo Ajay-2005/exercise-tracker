@@ -3,9 +3,9 @@ require('dotenv').config()
 const express = require('express')
 const app = express()
 const cors = require('cors')
-const { MongoClient, ServerApiVersion } = require('mongodb');
+const { MongoClient, ServerApiVersion, ObjectId } = require('mongodb');
 const uri = process.env.MONGODB_URI;
-console.log(uri)
+
 
 app.use(cors())
 app.use(express.static('public'))
@@ -39,7 +39,7 @@ connectToMongoDB().then(() => {
     const user = {
       username: uname
     };
-  
+
     try {
       const result = await db.collection("users").insertOne(user);
       console.log("Document inserted", result);
@@ -52,39 +52,74 @@ connectToMongoDB().then(() => {
   app.get("/api/users", async (req, res) => {
     try {
       const users = await db.collection("users").find().toArray();
-  
+
       res.json(users);
     } catch (error) {
       console.error("Error retrieving users", error);
       res.status(500).json({ error: "Error retrieving users" });
     }
   });
-  app.post("/api/users/:_id/exercises",async(req,res)=>{
-    const exercise={
-      _id:req.body._id,
-      description:req.body.description,
-      duration:req.body.duration,
-      date:req.body.date
-    }
-    try{
-      const result=await db.collection("workouts").insertOne(exercise);
-      console.log("document inserted "+result)
+  app.post("/api/users/:_id/exercises", async (req, res) => {
+    try {
+      const userdata = await db.collection("users").findOne({ _id: new ObjectId(req.params._id) }); // Corrected the query
+
+      if (!userdata) {
+        return res.status(404).json({ error: "User not found" });
+      }
+      const date = new Date(req.body.date)
+      const exercise = {
+        _id: req.params._id, // Assuming you want to use the user's _id
+        username: userdata.username, // Corrected to use userdata.username
+        date: date.toDateString(),
+        duration: req.body.duration,
+        description: req.body.description,
+      };
+
+      const result = await db.collection("workouts").insertOne(exercise);
+
+      console.log("Document inserted " + result);
       res.json(exercise);
+    } catch (error) {
+      console.error(error);
+      res.status(500).json({ error: "Internal server error" });
     }
-    catch(error){
-      console.error(error)
+  });
+
+  app.get("/api/users/:_id/logs", async (req, res) => {
+    const { from, to, limit } = req.query;
+    const id = req.params._id;
+    const user = await db.collection("users").findOne({ _id: new ObjectId(id) });
+  
+    if (!user) {
+      return res.status(404).json({ error: "User not found" });
     }
-  })
-  app.get("/api/users/_id/logs",async(req,res)=>{
-    try{
-    const logs=await db.collection("workouts").find({_id:req.query._id}).toArray();
-    console.log(logs)
+  
+    const query = { _id: new ObjectId(id) };
+  
+    if (from || to) {
+      query.date = {};
+      if (from) query.date.$gte = new Date(from);
+      if (to) query.date.$lte = new Date(to);
     }
-    catch(error){
-      console.error(error)
-    }
-    
-  })
+  
+    const cursor = db.collection("workouts").find(query).sort({ date: 1 }).limit(parseInt(limit) || 0);
+    const exercises = await cursor.toArray();
+  
+    // Prepare the response
+    const log = exercises.map((exercise) => ({
+      description: exercise.description,
+      duration: exercise.duration,
+      date: new Date(exercise.date).toDateString(),
+    }));
+  
+    res.json({
+      _id: id,
+      username: user.username,
+      count: log.length,
+      log: log,
+    });
+  });
+  
   const listener = app.listen(process.env.PORT || 3000, () => {
     console.log('Your app is listening on port ' + listener.address().port)
   });
